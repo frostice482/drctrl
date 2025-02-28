@@ -36,6 +36,9 @@ local oneTickSat = false
 -- If reaactor is virtually stopping, used for faster shutdown time
 local virtualStopping = false
 
+local fuelMultSensScale = 50000
+local fuelMultTempDeltaThres = 0.1
+
 monitor.onOptionChange = function()
     os.queueEvent('config_change')
 end
@@ -74,6 +77,7 @@ local function updateInfo(info)
     if virtualStopping or status == "stopping" then
         local mult = 1 - targetField
         inputGateValue = math.min(info.maxFieldStrength, info.fieldDrainRate / mult)
+        outputGateValue = 0
     end
 
     if virtualStopping then
@@ -118,8 +122,10 @@ local function updateInfo(info)
             end
         end
 
+        local field = DR.calculator:fieldStrength(info)
+        local drain = info.fieldDrainRate
         local sat = DR.calculator:saturationRate(info)
-        local convertedFuel = DR.calculator:convertedFuelRate(info)
+        local convertedFuel = math.min(1, DR.calculator:convertedFuelRate(info))
         local deltaTemp = DR.calculator:tempDelta(temp, sat, convertedFuel)
         local normalFuelUseRate = DR.calculator:normalFuelUseRate(temp, sat)
 
@@ -128,16 +134,15 @@ local function updateInfo(info)
             local mult = (fuelMultLowRange + fuelMultHighRange) / 2
             local accuFuelConv = normalFuelUseRate * mult * 1000000
             local fuelConvNb = info.fuelConversionRate
-            if (math.abs(accuFuelConv - fuelConvNb) < 50) then
+            if (math.abs(accuFuelConv - fuelConvNb) < math.max(fuelConvNb / fuelMultSensScale, 1)) then
                 info.fuelConversionRate = accuFuelConv
-            elseif math.abs(deltaTemp) < 1 then
+            elseif math.abs(deltaTemp) < fuelMultTempDeltaThres then
                 fuelMultLowRange = nil
                 fuelMultHighRange = nil
             end
         end
 
         local fuelConvNb = info.fuelConversionRate
-        local fuelConvBucket = info.fuelConversionRate / 1000000
         local maxRft = DR.calculator:maxRft(info.generationRate, sat)
         local baseMaxRft = DR.calculator:baseMaxRft(maxRft, convertedFuel)
         local appliedMax = math.min(maxInput, info.maxFieldStrength) * (1 - targetField)
@@ -146,9 +151,8 @@ local function updateInfo(info)
         local tickAheads = 3 - toff
 
         -- Set output drain rate
-        local nextConvertedFuel = math.min(1, (info.fuelConversion + fuelConvBucket * tickAheads) / info.maxFuelConversion)
-        local minSatByTemp = DR.calculator:targetEnergySaturationByTemperature(nextConvertedFuel, maxTemp, 18)
-        local minSatByInput = DR.calculator:minPossibleSaturation(baseMaxRft, appliedMax, nextConvertedFuel, 18, 18)
+        local minSatByTemp = DR.calculator:targetEnergySaturationByTemperature(convertedFuel, maxTemp, 18)
+        local minSatByInput = DR.calculator:minPossibleSaturation(baseMaxRft, appliedMax, convertedFuel, 18, 18)
         local minSat = math.max(minSatByTemp, minSatByInput)
 
         outputGateValue = maxRft * (1 - minSat)
@@ -161,12 +165,22 @@ local function updateInfo(info)
         local nextSat = (info.energySaturation + tickAheads * (-outputGateValue + (1 - sat) * maxRft)) / info.maxEnergySaturation
 
         -- Set input drain rate for 2 ticks in the future
-        local appliedDrain = DR.calculator:targetFieldDrain(baseMaxRft, temp + deltaTemp * tickAheads, nextSat)
-        local mult = 1 - targetField
-        inputGateValue = math.min(info.maxFieldStrength, math.max(info.fieldDrainRate, appliedDrain) / mult)
+        local nextDrain = DR.calculator:targetFieldDrain(baseMaxRft, temp + deltaTemp * tickAheads, nextSat)
+        local fieldMult = 1 - targetField
+        local appliedDrain = math.max(drain, nextDrain)
+        inputGateValue = appliedDrain / fieldMult
+
+        -- additional input
+        if field < targetField then
+            local required = appliedDrain * (1 / field - 1 / targetField) / 2
+            inputGateValue = inputGateValue + required
+        end
+
+        -- limit input to field strength
+        if inputGateValue > info.maxFieldStrength then inputGateValue = info.maxFieldStrength end
 
         -- predict fuel use multiplier, make sure it's stable enough
-        if math.abs(deltaTemp) < 1 and fuelConvNb > 500 then
+        if math.abs(deltaTemp) < fuelMultTempDeltaThres and fuelConvNb > 500 then
             local fuelMultLow = (fuelConvNb - 1) / 1000000 / normalFuelUseRate
             local fuelMultHigh = (fuelConvNb + 1) / 1000000 / normalFuelUseRate
             if not fuelMultLowRange or fuelMultLowRange < fuelMultLow then fuelMultLowRange = fuelMultLow end
@@ -253,7 +267,7 @@ local loops = {
                 local status = info and DR.calculator:normalizeStatus(info) or "invalid"
                 print(status)
             elseif input == 'debug' then
-                print(string.format("fuel mult: (%.5f) %.5f, %.5f", fuelMultLowRange and fuelMultHighRange and (fuelMultHighRange + fuelMultLowRange) / 2 or -1,fuelMultLowRange or -1, fuelMultHighRange or -1))
+                print(string.format("fuel mult: (%.8f) %.8f, %.8f", fuelMultLowRange and fuelMultHighRange and (fuelMultHighRange + fuelMultLowRange) / 2 or -1,fuelMultLowRange or -1, fuelMultHighRange or -1))
                 print(string.format("toff: %d", toff))
                 print(string.format("otosat: %d", oneTickSat == true and 1 or 0))
                 print(string.format("vstop: %d", virtualStopping == true and 1 or 0))
