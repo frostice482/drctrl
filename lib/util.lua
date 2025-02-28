@@ -35,8 +35,17 @@ local function round(num)
     return math.floor(num + 0.5)
 end
 
+local function table_shallowcopy(table, target)
+    target = target or {}
+    for k,v in pairs(table) do
+        target[k] = v
+    end
+    return target
+end
+
 return {
     getPeripheral = getPeripheral,
     waitKey = waitKey,
-    round = round
+    round = round,
+    table_shallowcopy = table_shallowcopy
 }

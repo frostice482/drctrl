@@ -1,6 +1,7 @@
 local DR = require 'lib/draconicreactor'
 local MonUtil = require 'lib/monutil'
 local constructor = require 'lib/constructor'
+local util = require 'lib/util'
 
 --- @alias __DRMonOptScale number | {text?: string, value: number}
 
@@ -47,23 +48,7 @@ local moptscale100 = {
     {value = 3.0, text = "3.0"}
 }
 
---- @return __DRMonOptScale[]
-local function moptscalebool(name, default)
-    return {
-        name = name,
-        scale = {
-            { text = "0/1", value = 1 }
-        },
-        min = 0,
-        max = 1,
-        default = default,
-        format = function(val)
-            return val == 1 and "yes" or " no"
-        end
-    }
-end
-
---- @type table<string, __DRMonOpt>
+--- @type __DRMonOpt[]
 local mopt = {{
     name = "Max Temp",
     scale = {
@@ -119,18 +104,15 @@ local mopt = {{
 --- "{value} < {mult} >  [-] [+]"
 
 --- @class __DRMonDefault
+--- @field opts __DRMonOpt[]
+--- @field optsvalues table<string, number>
+--- @field optsscales table<string, number>
+--- @field otpstouchlis MonUtilTouchListenerSet
+--- @field stattouchlis MonUtilTouchListenerSet
 local mdefaultstate = {
     --- @type DraconicReactorState
     prevstat = 'invalid',
-    --- @type table<string, number>
-    optsvalues = {},
-    --- @type table<string, number>
-    optsscales = {},
     optsindex = 1,
-    --- @type MonUtilTouchListenerSet
-    optstouchlis = {},
-    --- @type MonUtilTouchListenerSet
-    stattouchlis = {},
     --- @type fun(id: string, value: number): number | boolean | nil
     onOptionChange = function () end,
     onCharge = function () end,
@@ -254,7 +236,7 @@ local DRMonPrototype = {
             self:listenTouch(function() self:refreshOptions(math.max(index - size, 1), size) end, touchListeners)
         end
         -- next
-        if not mopt[index + size] then
+        if not self.opts[index + size] then
             self:blitn(" > ", colors.gray)
         else
             self:setCursorStart()
@@ -264,7 +246,7 @@ local DRMonPrototype = {
 
         for j = 1,size,1 do
             --- @type __DRMonOpt
-            local opt = mopt[index+j-1]
+            local opt = self.opts[index+j-1]
             local pos = top - 1 + j * 2
 
             self:UsetCursorPos(1, pos+1)
@@ -529,18 +511,21 @@ local DRMonPrototype = {
 --- @type DRMon
 local DRMon = constructor.createConstructor(DRMonPrototype, function (self, arg, target)
     self.super:__new(arg, target)
-
-    for key, value in pairs(mdefaultstate) do
-        target[key] = value
-    end
-
-    target.optsvalues = {}
-    target.optsscales = {}
+    util.table_shallowcopy(mdefaultstate, target)
+    util.table_shallowcopy({
+        opts = util.table_shallowcopy(mopt),
+        optsvalues = {},
+        optsscales = {},
+        otpstouchlis = {},
+        stattouchlis = {}
+    }, target)
 
     for index, value in ipairs(mopt) do
         target.optsvalues[value.name] = value.default
         target.optsscales[value.name] = value.scaleDefault or 1
     end
 end, MonUtil)
+
+DRMon.defaultOptions = mopt
 
 return DRMon
