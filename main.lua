@@ -43,14 +43,17 @@ monitor.onExit = function()
     os.queueEvent("reactor_exit")
 end
 monitor.onCharge = function()
+    os.queueEvent("reactor_statechange")
     virtualStopping = false
     reactor:charge()
 end
 monitor.onStop = function()
+    os.queueEvent("reactor_statechange")
     outputGateValue = 0
     virtualStopping = true
 end
 monitor.onStart = function()
+    os.queueEvent("reactor_statechange")
     virtualStopping = false
     prevTemp = nil
     reactor:activate()
@@ -92,13 +95,13 @@ local function updateInfo(info)
         local field = DR.calculator:fieldStrength(info)
         local temp = info.temperature
 
-        if sat < 0.5 then
-            inputGateValue = info.maxEnergySaturation / 20
-        elseif field < 0.5 then
-            inputGateValue = math.max(0.5 - field, 0.01) * info.maxFieldStrength / 5
+        if field < 0.5 then
+            inputGateValue = info.maxFieldStrength / 2 * math.max(0.01, (0.5 - field) / 5)
+        elseif sat < 0.5 then
+            inputGateValue = info.maxEnergySaturation / 2 * math.max(0.01, (0.5 - sat) / 5)
         elseif temp < 2000 then
             local reactable = DR.calculator:reactableFuel(info)
-            inputGateValue = math.max(2000 - temp, 1) * (100 + reactable)
+            inputGateValue = (1000 + reactable * 10) * math.max(0.8, (2000 - temp) / 8)
         end
     elseif status == "charged" then
         inputGateValue = 0
@@ -181,9 +184,9 @@ local function updateInfo(info)
     monitor:update(info, inputGateValue, outputGateValue)
 
     if status == "invalid" or status == "offline" or status == "cold" then
-        sleep(0.8)
+        parallel.waitForAny(function() sleep(0.8) end, function() os.pullEvent("reactor_statechange") end)
     elseif status == "charging" or status == "warming_up" or status == "charged" or status == "cooling" then
-        sleep(0.1)
+        parallel.waitForAny(function() sleep(0.05) end, function() os.pullEvent("reactor_statechange") end)
     end
 end
 
@@ -194,8 +197,8 @@ local loops = {
         while true do
             local curTick = tick
             local info = reactor:info()
-            if info then updateInfo(info) end
             if tick == curTick then sleep(0.05) end
+            if info then updateInfo(info) end
         end
     end;
 
