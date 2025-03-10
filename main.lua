@@ -133,32 +133,39 @@ local function updateInfo(info)
             end
         end
 
+        local maxField = info.maxFieldStrength
+        local maxSat = info.maxEnergySaturation
         local field = DR.calculator:fieldStrength(info)
         local drain = info.fieldDrainRate
         local sat = DR.calculator:saturationRate(info)
         local convertedFuel = math.min(1, DR.calculator:convertedFuelRate(info))
         local deltaTemp = DR.calculator:tempDelta(temp, sat, convertedFuel)
-
         local maxRft = DR.calculator:maxRft(info.generationRate, sat)
         local baseMaxRft = DR.calculator:baseMaxRft(maxRft, convertedFuel)
-        local appliedMax = math.min(maxInput, info.maxFieldStrength) * (1 - targetField)
-
-        toff = tick - inputTick
-        local tickAheads = 3 - toff
 
         -- Set output drain rate
+        local appliedMax = math.min(maxInput, maxField, inputGateValue + targetField * maxField / 5) * (1 - targetField)
         local minSatByTemp = DR.calculator:targetEnergySaturationByTemperature(convertedFuel, maxTemp, 18)
         local minSatByInput = DR.calculator:minPossibleSaturation(baseMaxRft, appliedMax, convertedFuel, 18, 18)
         local minSat = math.max(minSatByTemp, minSatByInput)
 
+        toff = tick - inputTick
+        local tickAheads = 3 - toff
+
+        -- increases tick ahead by 1 for every 0.4% field below target - 0.1%
+        if targetField < field - 0.001 then
+            tickAheads = tickAheads + (targetField - 0.001 - field) / 0.004
+        end
+
+        -- set output
         outputGateValue = maxRft * (1 - minSat)
         if sat < minSat then
-            local required = (minSat - sat) * info.maxEnergySaturation
+            local required = (minSat - sat) * maxSat
             outputGateValue = outputGateValue - required
         end
 
         -- Calculate next saturation by 2 ticks
-        local nextSat = (info.energySaturation + tickAheads * (-outputGateValue + (1 - sat) * maxRft)) / info.maxEnergySaturation
+        local nextSat = (info.energySaturation + tickAheads * (-outputGateValue + (1 - sat) * maxRft)) / maxSat
 
         -- Set input drain rate for 2 ticks in the future
         local nextDrain = DR.calculator:targetFieldDrain(baseMaxRft, temp + deltaTemp * tickAheads, nextSat)
@@ -166,14 +173,14 @@ local function updateInfo(info)
         local appliedDrain = math.max(drain, nextDrain)
         inputGateValue = appliedDrain / fieldMult
 
-        -- additional input
+        -- additional input - increase required field
         if field < targetField then
-            local required = appliedDrain * (1 / field - 1 / targetField) / 2
+            local required = appliedDrain * (targetField / field - 1) / 2
             inputGateValue = inputGateValue + required
         end
 
         -- limit input to field strength
-        if inputGateValue > info.maxFieldStrength then inputGateValue = info.maxFieldStrength end
+        if inputGateValue > maxField then inputGateValue = maxField end
 
         -- auto stop
         if convertedFuel > maxChaos then
