@@ -27,9 +27,11 @@ local outputGateValue = 0
 local tick = 0
 local inputTick = 0
 local toff = 0
--- One tick delay for energy saturation
+-- One tick delay
 local prevTemp
 local oneTickSat = false
+local otoFieldCounter = 0
+local oneTickField = false
 -- If reaactor is virtually stopping, used for faster shutdown time
 local virtualStopping = false
 
@@ -67,6 +69,7 @@ local function updateInfo(info)
 
     -- apply one tick offset
     if oneTickSat then info.energySaturation = info.energySaturation - outputGateValue end
+    if oneTickField then info.fieldStrength = info.fieldStrength - info.fieldDrainRate end
 
     if virtualStopping or status == "stopping" then
         local mult = 1 - targetField
@@ -104,7 +107,7 @@ local function updateInfo(info)
     elseif status == "charged" then
         inputGateValue = 0
     elseif status == "online" then
-        -- detect one tick offset
+        -- detect one tick offset for saturation
         local temp = info.temperature
         if not oneTickSat and status == "online" and prevTemp then
             local delta = temp - prevTemp
@@ -112,7 +115,21 @@ local function updateInfo(info)
             -- apply one tick offset
             if math.abs(expectedDelta - delta) > math.max(math.abs(expectedDelta / 8), 0.08) then
                 oneTickSat = true
-                if monitor.mon ~= term then print(string.format("OTO Sat enabled", temp, delta, expectedDelta)) end
+                if monitor.mon ~= term then print("OTO Sat enabled") end
+            end
+        end
+        -- detect one tick offset for field
+        -- only effective when temperature is stable
+        if not oneTickField then
+            if math.abs(info.fieldStrength - info.fieldDrainRate - targetField * info.maxFieldStrength) < 500 then
+                otoFieldCounter = otoFieldCounter+1
+                if otoFieldCounter >= 5 then
+                    -- apply one tick offset
+                    oneTickField = true
+                    if monitor.mon ~= term then print("OTO Field enabled") end
+                end
+            else
+                otoFieldCounter = 0
             end
         end
 
@@ -241,6 +258,7 @@ local loops = {
             elseif input == 'debug' then
                 print(string.format("toff: %d", toff))
                 print(string.format("otosat: %d", oneTickSat == true and 1 or 0))
+                print(string.format("otofield: %d", oneTickField == true and 1 or 0))
                 print(string.format("vstop: %d", virtualStopping == true and 1 or 0))
             else
                 printError("Unknown command, type h for help")
