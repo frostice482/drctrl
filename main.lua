@@ -23,9 +23,6 @@ local monitor = DRMon:new(monitorPer or term)
 -- Gate values
 local inputGateValue = 0
 local outputGateValue = 0
--- Fuel usage multiplier range
-local fuelMultLowRange
-local fuelMultHighRange
 --Tick counter
 local tick = 0
 local inputTick = 0
@@ -35,9 +32,6 @@ local prevTemp
 local oneTickSat = false
 -- If reaactor is virtually stopping, used for faster shutdown time
 local virtualStopping = false
-
-local fuelMultSensScale = 50000
-local fuelMultTempDeltaThres = 0.1
 
 monitor.onOptionChange = function()
     os.queueEvent('config_change')
@@ -127,22 +121,7 @@ local function updateInfo(info)
         local sat = DR.calculator:saturationRate(info)
         local convertedFuel = math.min(1, DR.calculator:convertedFuelRate(info))
         local deltaTemp = DR.calculator:tempDelta(temp, sat, convertedFuel)
-        local normalFuelUseRate = DR.calculator:normalFuelUseRate(temp, sat)
 
-        -- enable accurate fuel conversion calculation
-        if fuelMultLowRange and fuelMultHighRange then
-            local mult = (fuelMultLowRange + fuelMultHighRange) / 2
-            local accuFuelConv = normalFuelUseRate * mult * 1000000
-            local fuelConvNb = info.fuelConversionRate
-            if (math.abs(accuFuelConv - fuelConvNb) < math.max(fuelConvNb / fuelMultSensScale, 1)) then
-                info.fuelConversionRate = accuFuelConv
-            elseif math.abs(deltaTemp) < fuelMultTempDeltaThres then
-                fuelMultLowRange = nil
-                fuelMultHighRange = nil
-            end
-        end
-
-        local fuelConvNb = info.fuelConversionRate
         local maxRft = DR.calculator:maxRft(info.generationRate, sat)
         local baseMaxRft = DR.calculator:baseMaxRft(maxRft, convertedFuel)
         local appliedMax = math.min(maxInput, info.maxFieldStrength) * (1 - targetField)
@@ -179,14 +158,7 @@ local function updateInfo(info)
         -- limit input to field strength
         if inputGateValue > info.maxFieldStrength then inputGateValue = info.maxFieldStrength end
 
-        -- predict fuel use multiplier, make sure it's stable enough
-        if math.abs(deltaTemp) < fuelMultTempDeltaThres and fuelConvNb > 500 then
-            local fuelMultLow = (fuelConvNb - 1) / 1000000 / normalFuelUseRate
-            local fuelMultHigh = (fuelConvNb + 1) / 1000000 / normalFuelUseRate
-            if not fuelMultLowRange or fuelMultLowRange < fuelMultLow then fuelMultLowRange = fuelMultLow end
-            if not fuelMultHighRange or fuelMultHighRange > fuelMultHigh then fuelMultHighRange = fuelMultHigh end
-        end
-
+        -- auto stop
         if convertedFuel > maxChaos then
             monitor.onStop()
         end
@@ -267,7 +239,6 @@ local loops = {
                 local status = info and DR.calculator:normalizeStatus(info) or "invalid"
                 print(status)
             elseif input == 'debug' then
-                print(string.format("fuel mult: (%.8f) %.8f, %.8f", fuelMultLowRange and fuelMultHighRange and (fuelMultHighRange + fuelMultLowRange) / 2 or -1,fuelMultLowRange or -1, fuelMultHighRange or -1))
                 print(string.format("toff: %d", toff))
                 print(string.format("otosat: %d", oneTickSat == true and 1 or 0))
                 print(string.format("vstop: %d", virtualStopping == true and 1 or 0))
